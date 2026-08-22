@@ -1,0 +1,7 @@
+﻿Vendor Name,Date,Invoice Number,Subtotal,Tax,Total Amount,Currency,Payment Method,Needs Review,File Name
+株式会社サクラマート,2024-11-05,000517,1180,118,1298,JPY,現金,,receipt_ja_konbini.jpg
+株式会社青空デザイン,2024-08-15,2024-JP-0312,730000,73000,803000,JPY,銀行振込,,invoice_ja_design.jpg
+BLUE HERON COFFEE,2024-03-14,INV-2024-8871,18.75,1.50,20.25,USD,VISA ****4417,,receipt_us_cafe.jpg
+NORDLICHT GmbH,2024-07-22,2024-DE-4472,1725.50,327.85,2053.35,EUR,Bank transfer (SEPA),,invoice_eu_supplier.jpg
+HIGHWAY 9 FUEL STOP,2024-06-30,774213,44.00,0.00,44.00,USD,DEBIT CARD,,receipt_photo_gas.jpg
+SAKURA MART,2024-11-05,000517,1180,118,1298,JPY,CASH,,receipt_jp_store.jpg

@@ -1,0 +1,80 @@
+[
+  {
+    "file": "receipt_us_cafe.jpg",
+    "truth": {
+      "Vendor Name": "BLUE HERON COFFEE",
+      "Date": "2024-03-14",
+      "Invoice Number": "INV-2024-8871",
+      "Subtotal": "18.75",
+      "Tax": "1.50",
+      "Total Amount": "20.25",
+      "Currency": "USD",
+      "Payment Method": "VISA"
+    }
+  },
+  {
+    "file": "receipt_jp_store.jpg",
+    "truth": {
+      "Vendor Name": "SAKURA MART",
+      "Date": "2024-11-05",
+      "Invoice Number": "000517",
+      "Subtotal": "1180",
+      "Tax": "118",
+      "Total Amount": "1298",
+      "Currency": "JPY",
+      "Payment Method": "CASH"
+    }
+  },
+  {
+    "file": "invoice_eu_supplier.jpg",
+    "truth": {
+      "Vendor Name": "NORDLICHT GmbH",
+      "Date": "2024-07-22",
+      "Invoice Number": "2024-DE-4472",
+      "Subtotal": "1725.50",
+      "Tax": "327.85",
+      "Total Amount": "2053.35",
+      "Currency": "EUR",
+      "Payment Method": "Bank transfer"
+    }
+  },
+  {
+    "file": "receipt_photo_gas.jpg",
+    "truth": {
+      "Vendor Name": "HIGHWAY 9 FUEL STOP",
+      "Date": "2024-06-30",
+      "Invoice Number": "774213",
+      "Subtotal": "44.00",
+      "Tax": "0.00",
+      "Total Amount": "44.00",
+      "Currency": "USD",
+      "Payment Method": "DEBIT CARD"
+    }
+  },
+  {
+    "file": "receipt_ja_konbini.jpg",
+    "truth": {
+      "Vendor Name": "株式会社サクラマート",
+      "Date": "2024-11-05",
+      "Invoice Number": "000517",
+      "Subtotal": "1180",
+      "Tax": "118",
+      "Total Amount": "1298",
+      "Currency": "JPY",
+      "Payment Method": "現金"
+    }
+  },
+  {
+    "file": "invoice_ja_design.jpg",
+    "truth": {
+      "Vendor Name": "株式会社青空デザイン",
+      "Date": "2024-08-15",
+      "Invoice Number": "2024-JP-0312",
+      "Subtotal": "730000",
+      "Tax": "73000",
+      "Total Amount": "803000",
+      "Currency": "JPY",
+      "Payment Method": "銀行振込"
+    }
+  }
+]

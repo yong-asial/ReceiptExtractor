@@ -1,0 +1,13 @@
+# Python virtual environment
+.venv/
+venv/
+
+# Byte-compiled files
+__pycache__/
+*.py[cod]
+
+# macOS
+.DS_Store
+
+# Blog draft (lives in the blog repo, not here)
+BLOG.md
