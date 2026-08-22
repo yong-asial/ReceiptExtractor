@@ -186,432 +186,55 @@ environment in the project folder with
 
 ---
 
-## Step 4: The app
-
-Make a folder on your Desktop called `ReceiptExtractor`, and inside it a file
-called `app.py` with the code below in it.
-
-> **On Windows:** use Notepad, VS Code, anything that saves plain text. Not Word.
-> If you're in Notepad, go **Save as**, change *Save as type* to **All Files**,
-> and then type `app.py`; otherwise Windows saves it as `app.py.txt` and nothing
-> runs. Leave the encoding on UTF-8, because there's Japanese in the code.
-
-You don't need to follow the code to use it. I've commented the parts that
-matter, since a few of them are the difference between a demo and something
-you'd let near real books.
-
-````python
-"""
-Private Receipt Extractor
-Reads receipt/invoice images with a local vision model and exports a CSV.
-Nothing is uploaded anywhere: the model runs on this machine via Ollama.
-"""
-
-import io
-import json
-import re
-
-import ollama
-import pandas as pd
-import streamlit as st
-from PIL import Image
-
-# --- Configuration -----------------------------------------------------------
-
-# Columns we ask the model for, in the order they should appear in the CSV.
-FIELDS = [
-    "Vendor Name",
-    "Date",
-    "Invoice Number",
-    "Subtotal",
-    "Tax",
-    "Total Amount",
-    "Currency",
-    "Payment Method",
-]
-
-PROMPT = f"""You are a bookkeeping assistant reading a receipt or invoice.
-
-Return ONLY a JSON object with exactly these keys:
-{json.dumps(FIELDS, indent=2)}
-
-Rules:
-- "Date" is the date the receipt or invoice was ISSUED, not a due date or a
-  service period. Return it as YYYY-MM-DD, converting from whatever format the
-  document uses (including Japanese 2024年11月5日 style).
-- Copy "Vendor Name" and "Payment Method" exactly as printed, in the document's
-  own language and script. Do not translate or romanise them.
-- Amounts must be plain numbers with no currency symbols and no thousands
-  separators, e.g. 1234.56
-- "Currency" is the 3-letter code, e.g. USD, JPY, EUR.
-- Use the string "Not Found" for anything you cannot read on the receipt.
-- Never guess or invent a value. Never do arithmetic to fill a blank.
-- Output no markdown, no code fences, no commentary. JSON only.
-"""
-
-# Long side, in pixels, that images are shrunk to before going to the model.
-# Big photos are slow and no more accurate; ~1400px keeps small print readable.
-MAX_EDGE = 1400
-
-
-# --- Helpers -----------------------------------------------------------------
-
-def prepare_image(raw: bytes) -> bytes:
-    """Downscale, flatten transparency, honour EXIF rotation, re-encode as JPEG."""
-    img = Image.open(io.BytesIO(raw))
-
-    # Phone photos carry rotation in EXIF; models see the raw pixels, so apply it.
-    try:
-        from PIL import ImageOps
-
-        img = ImageOps.exif_transpose(img)
-    except Exception:
-        pass
-
-    if img.mode not in ("RGB", "L"):
-        img = img.convert("RGB")
-
-    if max(img.size) > MAX_EDGE:
-        scale = MAX_EDGE / max(img.size)
-        new_size = (max(1, int(img.width * scale)), max(1, int(img.height * scale)))
-        img = img.resize(new_size, Image.LANCZOS)
-
-    out = io.BytesIO()
-    img.convert("RGB").save(out, format="JPEG", quality=90)
-    return out.getvalue()
-
-
-def parse_json(text: str) -> dict:
-    """Pull a JSON object out of the model's reply, tolerating stray prose."""
-    text = text.strip()
-
-    # Strip ```json ... ``` fences if the model added them anyway.
-    fence = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL)
-    if fence:
-        text = fence.group(1)
-
-    try:
-        return json.loads(text)
-    except json.JSONDecodeError:
-        pass
-
-    # Fall back to the outermost {...} span.
-    start, end = text.find("{"), text.rfind("}")
-    if start != -1 and end > start:
-        return json.loads(text[start : end + 1])
-
-    raise ValueError(f"No JSON object in model reply: {text[:200]}")
-
-
-def clean_amount(value) -> str:
-    """Normalise '$1,234.56' / '1 234,56 EUR' style strings to '1234.56'."""
-    if value is None:
-        return "Not Found"
-    s = str(value).strip()
-    if not s or s.lower() in {"not found", "n/a", "none", "null", "-"}:
-        return "Not Found"
-
-    # Drop everything that is not a digit, separator, or minus sign.
-    s = re.sub(r"[^\d.,\-]", "", s)
-    if not s:
-        return "Not Found"
-
-    # If both separators appear, the rightmost one is the decimal point.
-    if "," in s and "." in s:
-        if s.rfind(",") > s.rfind("."):
-            s = s.replace(".", "").replace(",", ".")
-        else:
-            s = s.replace(",", "")
-    elif "," in s:
-        # A single comma is a decimal comma only when it looks like one (1,50).
-        s = s.replace(",", ".") if re.fullmatch(r"-?\d+,\d{1,2}", s) else s.replace(",", "")
-
-    return s
-
-
-def is_ambiguous_amount(value: str) -> bool:
-    """True for values like '1.234', where the dot could be either separator.
-
-    '1.234' is 1234 to a German reader and 1.234 to an American one. Guessing
-    wrong misstates the figure by 1000x, so we surface it instead of picking.
-    """
-    return bool(re.fullmatch(r"-?\d{1,3}\.\d{3}", str(value).strip()))
-
-
-MONTHS = {m: i for i, m in enumerate(
-    ["jan", "feb", "mar", "apr", "may", "jun",
-     "jul", "aug", "sep", "oct", "nov", "dec"], start=1)}
-
-
-def clean_date(value) -> str:
-    """Coerce common receipt date formats to YYYY-MM-DD.
-
-    Only unambiguous cases are converted. 06/07/2024 could be June 7th or
-    July 6th, so it is left exactly as printed and flagged for review rather
-    than silently filed under the wrong month.
-    """
-    if value is None:
-        return "Not Found"
-    s = str(value).strip()
-    if not s or s.lower() in {"not found", "n/a", "none", "null", "-"}:
-        return "Not Found"
-
-    # Already correct.
-    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", s):
-        return s
-
-    # Japanese style: 2024年11月5日 (optionally with a trailing weekday).
-    m = re.match(r"(\d{4})\s*年\s*(\d{1,2})\s*月\s*(\d{1,2})\s*日", s)
-    if m:
-        y, mo, d = (int(g) for g in m.groups())
-        if 1 <= mo <= 12 and 1 <= d <= 31:
-            return f"{y:04d}-{mo:02d}-{d:02d}"
-
-    # YYYY?MM?DD with any separator.
-    m = re.fullmatch(r"(\d{4})[-/.](\d{1,2})[-/.](\d{1,2})", s)
-    if m:
-        y, mo, d = (int(g) for g in m.groups())
-        if 1 <= mo <= 12 and 1 <= d <= 31:
-            return f"{y:04d}-{mo:02d}-{d:02d}"
-
-    # "14 Mar 2024" / "Mar 14, 2024".
-    m = re.fullmatch(r"(\d{1,2})[\s-]+([A-Za-z]{3,})\.?[\s-]+(\d{4})", s)
-    if m and m.group(2)[:3].lower() in MONTHS:
-        return f"{int(m.group(3)):04d}-{MONTHS[m.group(2)[:3].lower()]:02d}-{int(m.group(1)):02d}"
-    m = re.fullmatch(r"([A-Za-z]{3,})\.?[\s-]+(\d{1,2}),?[\s-]+(\d{4})", s)
-    if m and m.group(1)[:3].lower() in MONTHS:
-        return f"{int(m.group(3)):04d}-{MONTHS[m.group(1)[:3].lower()]:02d}-{int(m.group(2)):02d}"
-
-    # Two numbers then a year: only safe when one of them must be the day.
-    m = re.fullmatch(r"(\d{1,2})[-/.](\d{1,2})[-/.](\d{4})", s)
-    if m:
-        a, b, y = (int(g) for g in m.groups())
-        if a > 12 and b <= 12:          # DD-MM-YYYY
-            return f"{y:04d}-{b:02d}-{a:02d}"
-        if b > 12 and a <= 12:          # MM-DD-YYYY
-            return f"{y:04d}-{a:02d}-{b:02d}"
-
-    return s   # ambiguous or unrecognised: keep verbatim, flag_issues() warns
-
-
-def normalise(row: dict) -> dict:
-    """Force the model's dict into our exact schema with tidy values."""
-    out = {}
-    for field in FIELDS:
-        value = row.get(field, "Not Found")
-        if field in ("Subtotal", "Tax", "Total Amount"):
-            out[field] = clean_amount(value)
-        elif field == "Date":
-            out[field] = clean_date(value)
-        else:
-            text = str(value).strip() if value is not None else ""
-            out[field] = text if text else "Not Found"
-    return out
-
-
-def flag_issues(row: dict) -> str:
-    """Cheap sanity checks so a human knows which rows to eyeball."""
-    problems = []
-
-    if row["Total Amount"] == "Not Found":
-        problems.append("no total")
-
-    ambiguous = [f for f in ("Subtotal", "Tax", "Total Amount")
-                 if is_ambiguous_amount(row[f])]
-    if ambiguous:
-        problems.append(f"check separator in {', '.join(ambiguous)}")
-
-    if row["Date"] == "Not Found":
-        problems.append("no date")
-    elif not re.fullmatch(r"\d{4}-\d{2}-\d{2}", row["Date"]):
-        problems.append("odd date format")
-
-    # Subtotal + tax should equal the total. If it doesn't, the model misread one.
-    try:
-        subtotal = float(row["Subtotal"])
-        tax = float(row["Tax"])
-        total = float(row["Total Amount"])
-        if abs((subtotal + tax) - total) > 0.02:
-            problems.append("subtotal + tax != total")
-    except (ValueError, TypeError):
-        pass
-
-    return ", ".join(problems)
-
-
-def extract(image_bytes: bytes, model: str) -> dict:
-    """Run one image through the local model and return a normalised row."""
-    response = ollama.chat(
-        model=model,
-        messages=[{"role": "user", "content": PROMPT, "images": [image_bytes]}],
-        # temperature 0 keeps repeated runs on the same receipt consistent.
-        options={"temperature": 0},
-    )
-    return normalise(parse_json(response["message"]["content"]))
-
-
-# Families measured on receipts, best first. Everything else vision-capable is
-# still offered, just below these.
-PREFERRED = ("qwen2.5vl", "qwen2-vl", "minicpm-v", "llava", "gemma3", "granite")
-
-# Ollama dropped support for Llama 3.2 Vision's architecture. The model still
-# downloads and still advertises a "vision" capability, then fails to load with
-# "unknown model architecture: 'mllama'". Hide it rather than offer a choice
-# that can only fail on the first receipt.
-BROKEN_ARCHITECTURES = {"mllama"}
-
-
-def _field(obj, name, default=None):
-    """Read a field from an Ollama response, which may be an object or a dict."""
-    if obj is None:
-        return default
-    value = getattr(obj, name, None)
-    if value is None and hasattr(obj, "get"):
-        try:
-            value = obj.get(name)
-        except Exception:
-            value = None
-    return default if value is None else value
-
-
-def list_models() -> tuple:
-    """Return (vision-capable models best-first, number hidden).
-
-    Ollama reports what each model can actually do, so text-only models
-    (llama3, mistral) and embedding models (nomic-embed-text) are excluded by
-    asking rather than by guessing from their names. None of them can read an
-    image, so offering them only invites a confusing failure.
-    """
-    try:
-        names = [m.get("model") or m.get("name") for m in ollama.list()["models"]]
-    except Exception:
-        return (), 0
-
-    usable, hidden = [], 0
-    for name in [n for n in names if n]:
-        try:
-            info = ollama.show(name)
-            caps = [str(c).lower() for c in _field(info, "capabilities", [])]
-            arch = str(_field(_field(info, "modelinfo", {}), "general.architecture", "")).lower()
-            family = str(_field(_field(info, "details", {}), "family", "")).lower()
-        except Exception:
-            hidden += 1          # can't confirm it works, so don't offer it
-            continue
-
-        if "vision" not in caps or arch in BROKEN_ARCHITECTURES or family in BROKEN_ARCHITECTURES:
-            hidden += 1
-            continue
-        usable.append(name)
-
-    def rank(name: str) -> tuple:
-        low = name.lower()
-        for i, fam in enumerate(PREFERRED):
-            if fam in low:
-                # Within a family, bigger tends to read small print better.
-                return (0, i, 0 if ":7b" in low or ":8b" in low else 1, low)
-        return (1, 0, 0, low)
-
-    return tuple(sorted(usable, key=rank)), hidden
-
-
-# --- UI ----------------------------------------------------------------------
-
-# "wide" so the ten-column results table fits without horizontal scrolling.
-st.set_page_config(page_title="Private Receipt Extractor", page_icon="🧾",
-                   layout="wide")
-st.title("🧾 Private Receipt Extractor")
-st.caption(
-    "Drop in your receipts and get a spreadsheet back. "
-    "Runs entirely on this computer — nothing is uploaded."
+## Step 4: Get the app
+
+The app is a single Python file, and it already lives on GitHub. Copying a few
+hundred lines out of a blog post is a great way to lose a bracket somewhere on
+line 300, so download it instead:
+
+```bash
+cd ~/Desktop
+git clone https://github.com/yong-asial/ReceiptExtractor.git
+cd ReceiptExtractor
+```
+
+If you don't have `git`, open [the repository][repo] in your browser, click the
+green **Code** button, choose **Download ZIP**, and unzip it onto your
+Desktop. GitHub names the unzipped folder `ReceiptExtractor-main`, so rename it
+to `ReceiptExtractor` and the commands in the next step will match.
+
+The repo pins the same four libraries from Step 3 in `app/requirements.txt`, so
+if you skipped ahead — or want them in a virtual environment rather than
+system-wide — `pip install -r app/requirements.txt` from inside the folder does
+the whole of Step 3 in one line.
+
+> **On Windows:** `cd %USERPROFILE%\Desktop` first, and if OneDrive is syncing
+> your Desktop the real path is `%USERPROFILE%\OneDrive\Desktop`. Run
+> `dir %USERPROFILE%` to see which of the two you have. The ZIP route works the
+> same; right-click the download and choose **Extract All**.
+
+You don't need to read the code to use it. The whole app is `app/app.py`, and
+underneath the file handling and the table, the part that actually reads a
+receipt is seven lines:
+
+```python
+response = ollama.chat(
+    model=model,
+    messages=[{"role": "user", "content": PROMPT, "images": [image_bytes]}],
+    # temperature 0 keeps repeated runs on the same receipt consistent.
+    options={"temperature": 0},
 )
+return normalise(parse_json(response["message"]["content"]))
+```
 
-available, hidden = list_models()
-if not available:
-    st.error(
-        "No model here can read images.\n\n"
-        "Run `ollama pull qwen2.5vl:7b` in a terminal, then reload this page. "
-        "If that is already done, check the Ollama app is running."
-    )
-    st.stop()
-
-model = st.selectbox("AI model", available,
-                     help="Only models that can read images are listed.")
-if hidden:
-    st.caption(
-        f"{hidden} other installed model{'s' if hidden > 1 else ''} "
-        f"hidden — text-only or embedding models cannot read receipts."
-    )
-
-uploaded_files = st.file_uploader(
-    "Receipts",
-    type=["jpg", "jpeg", "png", "webp", "bmp", "tiff"],
-    accept_multiple_files=True,
-)
-
-def upload_signature(files) -> tuple:
-    """Identify the current upload set, so stale results can be dropped."""
-    if not files:
-        return ()
-    return tuple(sorted(getattr(f, "file_id", None) or (f.name, f.size)
-                        for f in files))
-
-
-# Streamlit re-runs this whole script on every interaction — including the
-# download click. Results therefore live in session_state and are drawn below,
-# outside the button block; keeping them in local variables would make the
-# table vanish the moment anything else on the page was touched.
-signature = upload_signature(uploaded_files)
-if st.session_state.get("signature") != signature:
-    st.session_state["signature"] = signature
-    st.session_state.pop("results", None)
-    st.session_state.pop("failures", None)
-
-if uploaded_files and st.button("Extract data", type="primary"):
-    rows, failures = [], []
-    progress = st.progress(0.0, text="Starting…")
-
-    for i, file in enumerate(uploaded_files):
-        progress.progress(i / len(uploaded_files), text=f"Reading {file.name}…")
-        try:
-            row = extract(prepare_image(file.getvalue()), model)
-            row["Needs Review"] = flag_issues(row)
-            row["File Name"] = file.name
-            rows.append(row)
-        except Exception as exc:
-            failures.append((file.name, str(exc)))
-
-    progress.empty()
-    st.session_state["results"] = rows
-    st.session_state["failures"] = failures
-
-# --- Results, redrawn on every rerun ----------------------------------------
-
-for name, error in st.session_state.get("failures", []):
-    st.error(f"Couldn't read **{name}** — {error}")
-
-rows = st.session_state.get("results")
-if rows:
-    column_order = FIELDS + ["Needs Review", "File Name"]
-    df = pd.DataFrame(rows)[column_order]
-
-    needs_review = int((df["Needs Review"] != "").sum())
-    if needs_review:
-        st.warning(
-            f"{needs_review} of {len(df)} receipts have something worth "
-            "double-checking — see the **Needs Review** column."
-        )
-    else:
-        st.success(f"Read {len(df)} receipts.")
-
-    st.dataframe(df, use_container_width=True)
-
-    st.download_button(
-        "📥 Download as spreadsheet (CSV)",
-        data=df.to_csv(index=False).encode("utf-8-sig"),
-        file_name="receipts.csv",
-        mime="text/csv",
-    )
-````
+That's the entire trick: hand the image and a prompt to a model running on your
+own machine, and read the JSON back. `PROMPT` asks for eight named fields and
+nothing else, and `normalise` cleans up what comes back — stripping currency
+symbols, converting `1.725,50` to `1725.50`, turning `2024年11月5日` into
+`2024-11-05`, and flagging any receipt whose subtotal and tax don't add up to
+its total. Those details are worth a read in the file itself if you plan to
+point this at real books; they're the difference between a demo and something
+you'd trust.
 
 ---
 
@@ -620,15 +243,15 @@ if rows:
 Back in the terminal:
 
 ```bash
-cd Desktop/ReceiptExtractor
-streamlit run app.py
+cd ~/Desktop/ReceiptExtractor
+streamlit run app/app.py
 ```
 
 > **On Windows:** backslashes, and it's safest to spell the path out:
 >
 > ```
 > cd %USERPROFILE%\Desktop\ReceiptExtractor
-> py -m streamlit run app.py
+> py -m streamlit run app\app.py
 > ```
 >
 > In PowerShell, use `cd $HOME\Desktop\ReceiptExtractor` instead. Two gotchas
@@ -643,5 +266,53 @@ The browser opens by itself. Drag in some receipts, click **Extract data**, and
 watch the bar. The first one takes 10-20 seconds while the model loads into
 memory, then it settles down to about 5 seconds each.
 
+When it finishes you get a green **Read 6 receipts.** line, the table, and a
+download button:
+
+![Six receipts extracted into a table, ready to download as CSV](images/app-results.png)
+
+That run is six documents in three languages and three currencies — a US cafe
+receipt, a German invoice with `1.725,50` written the European way, a blurry
+photo of a fuel receipt taken at an angle, and three Japanese documents — and
+every field on every one of them is correct. The Japanese vendor names come
+back as 株式会社サクラマート rather than a romanised guess, and the dates are
+all normalised to `YYYY-MM-DD` no matter how the original was written.
+
+**Download as spreadsheet (CSV)** gives you a file that opens straight into
+Excel, Numbers, or Google Sheets. One warning: spreadsheet apps like to strip
+the leading zeros off invoice numbers such as `000517`, so set that column to
+Text on import if it matters to you.
+
 `Ctrl+C` in the terminal stops it. Tomorrow, same two commands. (That's `Ctrl`
 and not `Cmd`, even on a Mac.)
+
+---
+
+## So, was it worth it?
+
+You now have a receipt reader that costs nothing per scan, works on a plane,
+and never sends a client's bank details to a server you can't name. No
+subscription, no per-page pricing, no data processing agreement to read.
+
+The honest limits are worth stating. It's roughly five seconds a receipt, so
+this is a tool for a shoebox of receipts at the end of a quarter, not for
+thousands at a time. It needs about 6 GB of free memory for the 7B model,
+though the 3B one scored identically on my tests and fits comfortably on an
+8 GB machine. And it is a model reading an image, which means it will
+eventually misread something — that's why the app checks whether subtotal plus
+tax equals the total and flags the row when it doesn't. Look at the **Needs
+Review** column before you trust a number.
+
+What surprised me most was how good the small local models have got. I
+expected to be writing a post about a clever-but-flawed weekend hack, and
+instead `qwen2.5vl` read all 48 fields across all six test documents correctly,
+including the deliberately bad phone photo and the Japanese invoice. Two years
+ago this needed a cloud API and a per-page fee. Now it runs on a laptop, in a
+file short enough to read in one sitting.
+
+The code is on [GitHub][repo]. Change the field list, point it at your own
+documents, or lift the seven lines that matter into something of your own — the
+same pattern works for business cards, ID documents, handwritten notes, or any
+other pile of paper you'd rather not type up by hand.
+
+[repo]: https://github.com/yong-asial/ReceiptExtractor
