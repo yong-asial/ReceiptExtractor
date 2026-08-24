@@ -25,6 +25,21 @@ Nothing leaves the machine.
    .venv/bin/pip install -r app/requirements.txt
    ```
 
+## How the code is laid out
+
+Five files, each one thing, each explaining itself at the top:
+
+| File | What's in it |
+|---|---|
+| `settings.py` | Fields, prompt, size limits — the things you'd change |
+| `uploads.py` | The upload gate, and preparing an image for the model |
+| `reader.py` | Ollama: listing vision models, and reading one receipt |
+| `tidy.py` | Normalising amounts and dates, and the Needs Review flags |
+| `app.py` | The Streamlit page, and nothing else |
+
+Nothing but `app.py` imports Streamlit, so the other four can be imported and
+tested on their own — which is what the test scripts do.
+
 ## Run
 
 From the repository root:

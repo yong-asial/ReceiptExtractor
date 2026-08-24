@@ -1,24 +1,11 @@
 """Edge cases: non-receipt input, determinism, amount-cleaning unit tests."""
-import importlib.util, io, json, os, sys
+import io, json, os, sys
 from PIL import Image, ImageDraw, ImageFont
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, os.path.join(HERE, os.pardir, "app"))
 
-class _Stub:
-    """Stand-in for streamlit; dict-backed so st.session_state[...] = works."""
-    def __init__(self, *a, **k): object.__setattr__(self, "_d", {})
-    def __call__(self, *a, **k): return _Stub()
-    def __getattr__(self, n): return _Stub()
-    def __bool__(self): return False
-    def __setitem__(self, k, v): self._d[k] = v
-    def __getitem__(self, k): return self._d[k]
-    def __contains__(self, k): return k in self._d
-    def get(self, k, default=None): return self._d.get(k, default)
-    def pop(self, k, default=None): return self._d.pop(k, default)
-sys.modules["streamlit"] = _Stub()
-spec = importlib.util.spec_from_file_location(
-    "receipt_app", os.path.join(HERE, os.pardir, "app", "app.py"))
-app = importlib.util.module_from_spec(spec); spec.loader.exec_module(app)
+import reader, settings, tidy, uploads
 
 MODEL = sys.argv[1] if len(sys.argv) > 1 else "qwen2.5vl:7b"
 
@@ -36,7 +23,7 @@ cases = [
 ]
 bad = 0
 for raw, want in cases:
-    got = app.clean_amount(raw)
+    got = tidy.clean_amount(raw)
     ok = got == want
     bad += not ok
     print(f"  [{'ok  ' if ok else 'MISS'}] {raw!r:<18} -> {got!r}" + ("" if ok else f"  (want {want!r})"))
@@ -55,7 +42,7 @@ snippets = [
 bad2 = 0
 for s in snippets:
     try:
-        got = app.parse_json(s)
+        got = reader.parse_json(s)
         ok = got.get("Vendor Name") == "A"
     except Exception as e:
         ok, got = False, e
@@ -77,7 +64,7 @@ checks = [
 ]
 bad3 = 0
 for row, want in checks:
-    got = app.flag_issues(row)
+    got = tidy.flag_issues(row)
     ok = got == want
     bad3 += not ok
     print(f"  [{'ok  ' if ok else 'MISS'}] {got!r:<28}" + ("" if ok else f" (want {want!r})"))
@@ -97,7 +84,7 @@ dates = [
 ]
 bad3b = 0
 for raw, want in dates:
-    got = app.clean_date(raw); ok = got == want; bad3b += not ok
+    got = tidy.clean_date(raw); ok = got == want; bad3b += not ok
     print(f"  [{'ok  ' if ok else 'MISS'}] {str(raw):<20} -> {got!r}" + ("" if ok else f"  (want {want!r})"))
 print(f"  => {len(dates)-bad3b}/{len(dates)} passed")
 
@@ -111,11 +98,11 @@ d.text((40, 130), "Team offsite photo\n(no receipt here)", font=f, fill=(30, 30,
 d.ellipse([340, 60, 440, 160], fill=(120, 170, 220))
 buf = io.BytesIO(); img.save(buf, format="JPEG"); blank = buf.getvalue()
 try:
-    got = app.extract(app.prepare_image(blank), MODEL)
+    got = reader.extract(uploads.prepare_image(blank), MODEL)
     for k, v in got.items():
         print(f"    {k:<16} = {v!r}")
     invented = [k for k, v in got.items() if k in ("Total Amount","Subtotal","Tax") and v != "Not Found"]
-    print(f"  => invented amounts: {invented or 'none'}  flags: {app.flag_issues(got)!r}")
+    print(f"  => invented amounts: {invented or 'none'}  flags: {tidy.flag_issues(got)!r}")
 except Exception as e:
     print(f"  raised {type(e).__name__}: {e}")
 
@@ -126,7 +113,7 @@ with open(os.path.join(HERE, "receipts", "receipt_us_cafe.jpg"), "rb") as fh:
     raw = fh.read()
 seen = []
 for i in range(3):
-    r = app.extract(app.prepare_image(raw), MODEL)
+    r = reader.extract(uploads.prepare_image(raw), MODEL)
     seen.append(json.dumps(r, sort_keys=True))
     print(f"  run {i+1}: total={r['Total Amount']} date={r['Date']} vendor={r['Vendor Name']}")
 print(f"  => identical across runs: {len(set(seen)) == 1}")
@@ -136,7 +123,7 @@ print("6. prepare_image(): downscaling + PNG/alpha handling")
 print("="*66)
 big = Image.new("RGBA", (4000, 3000), (255, 0, 0, 128))
 b = io.BytesIO(); big.save(b, format="PNG")
-out = app.prepare_image(b.getvalue())
+out = uploads.prepare_image(b.getvalue())
 w, h = Image.open(io.BytesIO(out)).size
 print(f"  4000x3000 RGBA PNG -> {w}x{h} JPEG, {len(b.getvalue())//1024}KB -> {len(out)//1024}KB")
-print(f"  => long edge capped at {app.MAX_EDGE}: {max(w,h) == app.MAX_EDGE}")
+print(f"  => long edge capped at {settings.MAX_EDGE}: {max(w,h) == settings.MAX_EDGE}")

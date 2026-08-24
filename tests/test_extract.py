@@ -1,33 +1,10 @@
-"""Score app.py's extraction against ground truth, for one or more models."""
-import importlib.util, json, os, sys, time
+"""Score the extraction against ground truth, for one or more models."""
+import json, os, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-APP = os.path.join(HERE, os.pardir, "app", "app.py")
+sys.path.insert(0, os.path.join(HERE, os.pardir, "app"))
 
-# Import app.py without executing its Streamlit UI: stub out streamlit first.
-class _Stub:
-    """Stand-in for streamlit so app.py can be imported without a UI.
-
-    Backed by a real dict so st.session_state assignment works.
-    """
-    def __init__(self, *a, **k): object.__setattr__(self, "_d", {})
-    def __call__(self, *a, **k): return _Stub()
-    def __getattr__(self, name): return _Stub()
-    def __setitem__(self, k, v): self._d[k] = v
-    def __getitem__(self, k): return self._d[k]
-    def __contains__(self, k): return k in self._d
-    def get(self, k, default=None): return self._d.get(k, default)
-    def pop(self, k, default=None): return self._d.pop(k, default)
-    def __enter__(self): return self
-    def __exit__(self, *a): return False
-    def __bool__(self): return False
-    def __iter__(self): return iter([])
-
-sys.modules["streamlit"] = _Stub()
-
-spec = importlib.util.spec_from_file_location("receipt_app", APP)
-app = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(app)
+import reader, settings, tidy, uploads
 
 with open(os.path.join(HERE, "receipts", "ground_truth.json")) as fh:
     cases = json.load(fh)
@@ -46,7 +23,7 @@ for model in models:
 
         t0 = time.time()
         try:
-            got = app.extract(app.prepare_image(raw), model)
+            got = reader.extract(uploads.prepare_image(raw), model)
             err = None
         except Exception as exc:
             got, err = None, f"{type(exc).__name__}: {exc}"
@@ -60,7 +37,7 @@ for model in models:
             continue
 
         truth = case["truth"]
-        for field in app.FIELDS:
+        for field in settings.FIELDS:
             want, have = truth[field], got[field]
             # Payment method is free text; accept a substring match either way.
             if field == "Payment Method":
@@ -79,7 +56,7 @@ for model in models:
             note = "" if ok else f"   (want {want!r})"
             print(f"    [{mark}] {field:<16} = {have!r}{note}")
 
-        flags = app.flag_issues(got)
+        flags = tidy.flag_issues(got)
         print(f"    review flags: {flags or '(none)'}")
         rows.append({"file": case["file"], "got": got, "flags": flags})
 

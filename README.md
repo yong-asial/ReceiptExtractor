@@ -171,9 +171,9 @@ environment in the project folder with
 
 ## Step 4: Get the app
 
-The app is a single Python file, and it already lives on GitHub. Copying a few
-hundred lines out of a blog post is a great way to lose a bracket somewhere on
-line 300, so download it instead:
+The app is five short Python files, and it already lives on GitHub. Copying a
+few hundred lines out of a blog post is a great way to lose a bracket somewhere
+on line 300, so download it instead:
 
 ```bash
 cd ~/Desktop
@@ -196,12 +196,20 @@ the whole of Step 3 in one line.
 > `dir %USERPROFILE%` to see which of the two you have. The ZIP route works the
 > same; right-click the download and choose **Extract All**.
 
-You don't need to read the code to use it. The whole app is `app/app.py`, and
-it's written to be read top to bottom. Its own comments split it into numbered
-parts, and they follow one receipt all the way through: the file picker
-(Part 1), preparing the image (Part 2), asking the model (Part 3), tidying the
-answer (Part 4), and finally the page itself (Part 6). Underneath the file
-handling and the table, the piece that actually reads a receipt is seven lines:
+You don't need to read the code to use it. But if you want to, it's split so
+that you can open the one file you care about and ignore the rest. Each is a
+couple of hundred lines at most, and each says at the top what it's for:
+
+| File | What's in it |
+|---|---|
+| `settings.py` | The columns, the prompt, the size limits. **Start here.** |
+| `uploads.py` | Checking the dropped-in files, and preparing an image |
+| `reader.py` | Asking the local model, and reading its reply |
+| `tidy.py` | Turning that reply into figures you could put in a ledger |
+| `app.py` | The page itself: what you see, and in what order |
+
+Underneath the file handling and the table, the piece that actually reads a
+receipt is seven lines of `reader.py`:
 
 ```python
 response = ollama.chat(
@@ -216,8 +224,9 @@ return normalise(parse_json(response["message"]["content"]))
 That's the entire trick: hand the image and a prompt to a model running on your
 own machine, and read the JSON back.
 
-The `PROMPT` is the other half of it, and it's just English. It asks for eight
-named fields and nothing else:
+The `PROMPT` is the other half of it, and it's just English. It lives in
+`settings.py` next to the field list, and asks for eight named fields and
+nothing else:
 
 ```python
 FIELDS = [
@@ -231,6 +240,20 @@ FIELDS = [
     "Payment Method",
 ]
 
+# Which of the FIELDS above hold money, and which one holds a date. These are
+# cleaned up differently from ordinary text, so if you add or rename a field,
+# check that it is listed here when it should be. Everything else in FIELDS is
+# copied across as plain text.
+AMOUNT_FIELDS = ("Subtotal", "Tax", "Total Amount")
+DATE_FIELD = "Date"
+
+# What we write in a column when the value simply isn't on the document.
+NOT_FOUND = "Not Found"
+
+# What we say to the model. It is just English — edit it to suit your business:
+# add a purchase order number, drop the payment method, ask for line items, or
+# write the rules in your own language. Keep the JSON-only instruction, though;
+# the rest of the app expects a JSON object back.
 PROMPT = f"""You are a bookkeeping assistant reading a receipt or invoice.
 
 Return ONLY a JSON object with exactly these keys:
@@ -253,14 +276,18 @@ Rules:
 
 Feel free to change that prompt to suit your own requirements and business
 needs — add a purchase order number, drop the payment method, ask for line
-items, or write the rules in your own language. Just be aware that the prompt
-isn't the only thing you'd be changing. `FIELDS` drives the CSV columns, and
-Part 4 of `app.py` makes assumptions about what comes back: `normalise` knows
-which fields are amounts and which one is a date, and the **Needs Review**
-check assumes subtotal plus tax should equal the total. Change the field list
-and you'll want to walk through Part 4 too.
+items, or write the rules in your own language. `FIELDS` drives the CSV columns,
+and right below it `AMOUNT_FIELDS` and `DATE_FIELD` say which of those columns
+hold money and which holds a date, because those get cleaned up differently
+from plain text. Keeping all three in `settings.py` means a new field is
+usually a one-file change.
 
-That whole part is about not trusting the answer blindly. It strips currency
+The one thing that doesn't follow you automatically is the **Needs Review**
+check in `tidy.py`, which assumes subtotal plus tax should equal the total. If
+you rework the money columns, read that function too.
+
+Cleaning up the answer is what `tidy.py` is for, and the whole file is about
+not trusting the model blindly. It strips currency
 symbols, converts `1.725,50` to `1725.50`, turns `2024年11月5日` into
 `2024-11-05`, throws away anything that doesn't end up looking like a number,
 and refuses to invent a date that doesn't exist. Where a value is genuinely
@@ -348,8 +375,8 @@ What surprised me most was how good the small local models have got. I
 expected to be writing a post about a clever-but-flawed weekend hack, and
 instead `qwen2.5vl` read all 48 fields across all six test documents correctly,
 including the deliberately bad phone photo and the Japanese invoice. Two years
-ago this needed a cloud API and a per-page fee. Now it runs on a laptop, in a
-file short enough to read in one sitting.
+ago this needed a cloud API and a per-page fee. Now it runs on a laptop, in
+five files short enough to read in one sitting.
 
 The code is on [GitHub][repo]. Change the field list, point it at your own
 documents, or lift the seven lines that matter into something of your own — the
