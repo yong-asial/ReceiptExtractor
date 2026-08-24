@@ -18,18 +18,12 @@ There's a third option now, and it's finally good enough to bother with. Vision
 models that can read a crumpled thermal receipt will run on an ordinary laptop,
 offline, for nothing. No account, no API key, no upload. This post is the build.
 
-I tested it before writing it up: six documents, three currencies, 48 fields,
-and it got all 48. Two of those documents were entirely in Japanese and one was
-a phone photo I ruined on purpose. So, how to build it, and the places where you
-still have to look at the screen yourself.
-
 ---
 
 ## What you get
 
 A page in your browser with a file picker. Drag in receipt images, press one
-button, get a table you can download as a CSV and open in Excel, Numbers or
-Google Sheets.
+button, get a table you can download as a CSV and open in Excel or Spreadsheets.
 
 ![The app when you first open it](images/app-empty.png)
 
@@ -37,7 +31,7 @@ Behind that page, a vision model on your own machine reads each image and pulls
 out vendor, date, invoice number, subtotal, tax, total, currency and payment
 method.
 
-Setup takes about 15 minutes. After that it's roughly 5 seconds a receipt.
+Setup takes about 15 minutes. After that it's roughly 5 seconds a receipt depend on your pc/laptop specification.
 
 Worth saying plainly up front: this replaces the typing, not the checking. You
 still read the numbers before they go into your books. What you're buying is
@@ -52,24 +46,19 @@ maybe 90% of the tedium, not an accountant.
 - 8 GB of RAM, though 16 is more comfortable. There's a smaller model below if
   you're on 8.
 - About 7 GB of free disk for the download.
-- The willingness to paste three commands into a terminal. You don't have to
-  understand them and I'll give you the exact text.
 
 ---
 
 ## Two things to get out of the way
 
-**This was built on a Mac.** All the code, the six test documents and every
-accuracy figure below came off a macOS machine. Ollama, Python and Streamlit all
-run on Windows perfectly well, so I expect the whole thing works there, but I
-haven't rerun the tests to prove it. Where something differs on Windows I've put
+**This was built on a Mac.** Ollama, Python and Streamlit all
+run on Windows perfectly well, so I expect the whole thing works there too. Where something differs on Windows I've put
 in a note:
 
 > **On Windows:** notes like this one.
 
 Take those as the Windows equivalents as far as I know them, not as steps I've
-verified end to end. Linux doesn't get a mention anywhere but behaves close
-enough to the Mac path.
+verified end to end.
 
 **Check the licence before you use this for paid work.** Free to download and
 free to use in a business are two different things, and it's easy to conflate
@@ -88,15 +77,13 @@ ollama show qwen2.5vl:7b --license
 ```
 
 Read that and the model card on the vendor's own site before you point this at a
-client's books. If you're handling someone else's financial data under contract,
-it's a question for whoever approves your software, not for a blog post.
+client's books.
 
 ---
 
 ## Step 1: Install Ollama
 
-Ollama runs AI models on your computer. It's a normal app, roughly as exotic as
-installing Spotify, and after the initial model download it doesn't talk to the
+Ollama runs AI models on your computer. After the initial model download it doesn't talk to the
 internet.
 
 Get it from **[ollama.com](https://ollama.com)**, install it like anything else,
@@ -144,10 +131,6 @@ Only 8 GB of RAM? Take the small one instead:
 ```bash
 ollama pull qwen2.5vl:3b
 ```
-
-3.2 GB, and it scored exactly the same as the 7b on every test I ran, Japanese
-included. I did not expect that. If you're tight on space or memory, start here
-and don't feel like you're settling for less.
 
 ---
 
@@ -228,8 +211,53 @@ return normalise(parse_json(response["message"]["content"]))
 ```
 
 That's the entire trick: hand the image and a prompt to a model running on your
-own machine, and read the JSON back. `PROMPT` asks for eight named fields and
-nothing else, and `normalise` cleans up what comes back — stripping currency
+own machine, and read the JSON back.
+
+The `PROMPT` is the other half of it, and it's just English. It asks for eight
+named fields and nothing else:
+
+```python
+FIELDS = [
+    "Vendor Name",
+    "Date",
+    "Invoice Number",
+    "Subtotal",
+    "Tax",
+    "Total Amount",
+    "Currency",
+    "Payment Method",
+]
+
+PROMPT = f"""You are a bookkeeping assistant reading a receipt or invoice.
+
+Return ONLY a JSON object with exactly these keys:
+{json.dumps(FIELDS, indent=2)}
+
+Rules:
+- "Date" is the date the receipt or invoice was ISSUED, not a due date or a
+  service period. Return it as YYYY-MM-DD, converting from whatever format the
+  document uses (including Japanese 2024年11月5日 style).
+- Copy "Vendor Name" and "Payment Method" exactly as printed, in the document's
+  own language and script. Do not translate or romanise them.
+- Amounts must be plain numbers with no currency symbols and no thousands
+  separators, e.g. 1234.56
+- "Currency" is the 3-letter code, e.g. USD, JPY, EUR.
+- Use the string "Not Found" for anything you cannot read on the receipt.
+- Never guess or invent a value. Never do arithmetic to fill a blank.
+- Output no markdown, no code fences, no commentary. JSON only.
+"""
+```
+
+Feel free to change that prompt to suit your own requirements and business
+needs — add a purchase order number, drop the payment method, ask for line
+items, or write the rules in your own language. Just be aware that the prompt
+isn't the only thing you'd be changing. `FIELDS` drives the CSV columns, and
+the rest of the file makes assumptions about what comes back: `normalise`
+knows which fields are amounts and which is a date, and the **Needs Review**
+check assumes subtotal plus tax should equal the total. Change the field list
+and you'll want to walk through those parts of `app.py` too.
+
+`normalise` cleans up what comes back — stripping currency
 symbols, converting `1.725,50` to `1725.50`, turning `2024年11月5日` into
 `2024-11-05`, and flagging any receipt whose subtotal and tax don't add up to
 its total. Those details are worth a read in the file itself if you plan to
@@ -263,7 +291,15 @@ streamlit run app/app.py
 > here needs to accept connections from anywhere.
 
 The browser opens by itself. Drag in some receipts, click **Extract data**, and
-watch the bar. The first one takes 10-20 seconds while the model loads into
+watch the bar.
+
+No receipts to hand? The repo ships the six test documents I used, in
+[`tests/receipts`][receipts] — a US cafe receipt, a
+[German invoice][r-eu] with European number formatting, a deliberately
+[blurry photo of a fuel receipt][r-gas], and three Japanese documents. Drag
+those in first to see what the output looks like. Their correct values are in
+[`ground_truth.json`][truth] in the same folder, so you can check the table
+against them field by field. The first one takes 10-20 seconds while the model loads into
 memory, then it settles down to about 5 seconds each.
 
 When it finishes you get a green **Read 6 receipts.** line, the table, and a
@@ -279,7 +315,7 @@ back as 株式会社サクラマート rather than a romanised guess, and the da
 all normalised to `YYYY-MM-DD` no matter how the original was written.
 
 **Download as spreadsheet (CSV)** gives you a file that opens straight into
-Excel, Numbers, or Google Sheets. One warning: spreadsheet apps like to strip
+Excel or Spreadsheets. One warning: spreadsheet apps like to strip
 the leading zeros off invoice numbers such as `000517`, so set that column to
 Text on import if it matters to you.
 
@@ -316,3 +352,7 @@ same pattern works for business cards, ID documents, handwritten notes, or any
 other pile of paper you'd rather not type up by hand.
 
 [repo]: https://github.com/yong-asial/ReceiptExtractor
+[receipts]: https://github.com/yong-asial/ReceiptExtractor/tree/main/tests/receipts
+[r-eu]: https://github.com/yong-asial/ReceiptExtractor/blob/main/tests/receipts/invoice_eu_supplier.jpg
+[r-gas]: https://github.com/yong-asial/ReceiptExtractor/blob/main/tests/receipts/receipt_photo_gas.jpg
+[truth]: https://github.com/yong-asial/ReceiptExtractor/blob/main/tests/receipts/ground_truth.json
