@@ -50,8 +50,89 @@ Rules:
 # Big photos are slow and no more accurate; ~1400px keeps small print readable.
 MAX_EDGE = 1400
 
+# Upload limits. Streamlit reads the whole file into memory before this script
+# sees it, so the per-image cap is also set in .streamlit/config.toml; this one
+# is the backstop for when the app is started from somewhere else.
+MAX_FILE_BYTES = 10 * 1024 * 1024      # 10 MB for a single image
+MAX_TOTAL_BYTES = 20 * 1024 * 1024     # 20 MB for everything in one batch
+
+# Refuse absurd pixel counts. A heavily compressed 200-megapixel photo can sit
+# well under 10 MB on disk and still need gigabytes of RAM to decode.
+MAX_PIXELS = 80_000_000
+
+# Extensions the file picker offers. This is only a first filter: an extension
+# is a claim, not a fact, so the bytes are checked too (see image_problem).
+IMAGE_EXTENSIONS = ["jpg", "jpeg", "png", "webp", "bmp", "tif", "tiff"]
+
 
 # --- Helpers -----------------------------------------------------------------
+
+def human_size(num_bytes: int) -> str:
+    """Format a byte count the way a person would say it: '12.4 MB', '840 KB'."""
+    if num_bytes >= 1024 * 1024:
+        return f"{num_bytes / (1024 * 1024):.1f} MB"
+    return f"{num_bytes / 1024:.0f} KB"
+
+
+def image_problem(raw: bytes) -> str:
+    """Say why these bytes are not a usable image, or return "" if they are.
+
+    The extension only tells us what the file is called. A renamed PDF, a
+    half-finished download and a real photo can all arrive as "receipt.jpg",
+    so the header is decoded before anything is sent to the model.
+    """
+    try:
+        img = Image.open(io.BytesIO(raw))
+        width, height = img.size
+        img.verify()          # verify() consumes the object; reopen to use it
+    except Exception:
+        return "is not an image we can read — it may be renamed, or corrupt."
+
+    if width * height > MAX_PIXELS:
+        return (f"is {width}×{height} pixels, which is too large to process. "
+                "Save it at a smaller size and try again.")
+    return ""
+
+
+def check_uploads(files) -> tuple:
+    """Split an upload set into images we will read and complaints to show.
+
+    Returns (accepted, problems): accepted is a list of (name, image_bytes),
+    problems is a list of ready-to-display messages. A batch over the total
+    limit is rejected whole rather than trimmed — a CSV that quietly dropped
+    three receipts looks exactly like a complete one.
+    """
+    accepted, problems = [], []
+
+    for file in files or []:
+        raw = file.getvalue()
+
+        if not raw:
+            problems.append(f"**{file.name}** is empty.")
+        elif len(raw) > MAX_FILE_BYTES:
+            problems.append(
+                f"**{file.name}** is {human_size(len(raw))}, over the "
+                f"{human_size(MAX_FILE_BYTES)} limit for one image. "
+                "Photograph it at a lower resolution, or shrink it first."
+            )
+        else:
+            problem = image_problem(raw)
+            if problem:
+                problems.append(f"**{file.name}** {problem}")
+            else:
+                accepted.append((file.name, raw))
+
+    total = sum(len(raw) for _, raw in accepted)
+    if total > MAX_TOTAL_BYTES:
+        problems.append(
+            f"These {len(accepted)} images come to {human_size(total)} together, "
+            f"over the {human_size(MAX_TOTAL_BYTES)} limit for one batch. "
+            "Remove a few and run the rest afterwards."
+        )
+        accepted = []
+
+    return accepted, problems
+
 
 def prepare_image(raw: bytes) -> bytes:
     """Downscale, flatten transparency, honour EXIF rotation, re-encode as JPEG."""
@@ -341,16 +422,33 @@ if hidden:
 
 uploaded_files = st.file_uploader(
     "Receipts",
-    type=["jpg", "jpeg", "png", "webp", "bmp", "tiff"],
+    type=IMAGE_EXTENSIONS,
     accept_multiple_files=True,
+    help=f"Photos and scans only — up to {human_size(MAX_FILE_BYTES)} per image "
+         f"and {human_size(MAX_TOTAL_BYTES)} in one go.",
 )
+
+accepted, problems = check_uploads(uploaded_files)
+
+for message in problems:
+    st.error(message)
+
+if accepted:
+    total = sum(len(raw) for _, raw in accepted)
+    st.caption(
+        f"{len(accepted)} image{'s' if len(accepted) > 1 else ''} ready — "
+        f"{human_size(total)} of {human_size(MAX_TOTAL_BYTES)}."
+    )
+
 
 def upload_signature(files) -> tuple:
     """Identify the current upload set, so stale results can be dropped."""
     if not files:
         return ()
-    return tuple(sorted(getattr(f, "file_id", None) or (f.name, f.size)
-                        for f in files))
+    # file_id when Streamlit gives us one, name+size otherwise — as a string
+    # either way, so a mixed set still sorts.
+    return tuple(sorted(
+        str(getattr(f, "file_id", None) or f"{f.name}:{f.size}") for f in files))
 
 
 # Streamlit re-runs this whole script on every interaction — including the
@@ -363,19 +461,19 @@ if st.session_state.get("signature") != signature:
     st.session_state.pop("results", None)
     st.session_state.pop("failures", None)
 
-if uploaded_files and st.button("Extract data", type="primary"):
+if accepted and st.button("Extract data", type="primary"):
     rows, failures = [], []
     progress = st.progress(0.0, text="Starting…")
 
-    for i, file in enumerate(uploaded_files):
-        progress.progress(i / len(uploaded_files), text=f"Reading {file.name}…")
+    for i, (name, raw) in enumerate(accepted):
+        progress.progress(i / len(accepted), text=f"Reading {name}…")
         try:
-            row = extract(prepare_image(file.getvalue()), model)
+            row = extract(prepare_image(raw), model)
             row["Needs Review"] = flag_issues(row)
-            row["File Name"] = file.name
+            row["File Name"] = name
             rows.append(row)
         except Exception as exc:
-            failures.append((file.name, str(exc)))
+            failures.append((name, str(exc)))
 
     progress.empty()
     st.session_state["results"] = rows

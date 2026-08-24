@@ -1,0 +1,13 @@
+# Read by `streamlit run` when it is started from this folder — which is what
+# run.command does.
+
+[server]
+# Streamlit buffers an upload into memory before app.py can look at it, so the
+# per-image limit is enforced here first. app.py checks again, both as a
+# backstop and because the total-per-batch limit has no server-side setting.
+maxUploadSize = 10
+
+[browser]
+# The app promises that nothing leaves this machine. Streamlit's usage
+# telemetry is on by default, which would make that untrue.
+gatherUsageStats = false
