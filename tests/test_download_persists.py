@@ -9,7 +9,8 @@ from playwright.sync_api import sync_playwright
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REC = os.path.join(HERE, "receipts")
-URL = "http://127.0.0.1:8501"
+# Override with APP_URL=http://127.0.0.1:8502 to test a second instance.
+URL = os.environ.get("APP_URL", "http://127.0.0.1:8501")
 FILES = ["receipt_us_cafe.jpg", "receipt_ja_konbini.jpg"]
 
 def rows_visible(pg) -> int:

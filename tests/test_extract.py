@@ -2,7 +2,7 @@
 import importlib.util, json, os, sys, time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-APP = "/Users/yong-asial/projects/blog/ollama-blog/app/app.py"
+APP = os.path.join(HERE, os.pardir, "app", "app.py")
 
 # Import app.py without executing its Streamlit UI: stub out streamlit first.
 class _Stub:

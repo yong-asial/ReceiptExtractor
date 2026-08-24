@@ -3,7 +3,8 @@ import os, sys, csv, io
 from playwright.sync_api import sync_playwright
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-URL = "http://127.0.0.1:8501"
+# Override with APP_URL=http://127.0.0.1:8502 to test a second instance.
+URL = os.environ.get("APP_URL", "http://127.0.0.1:8501")
 FILES = ["receipt_us_cafe.jpg", "receipt_jp_store.jpg",
          "invoice_eu_supplier.jpg", "receipt_photo_gas.jpg",
          "receipt_ja_konbini.jpg", "invoice_ja_design.jpg"]

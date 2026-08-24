@@ -197,8 +197,11 @@ the whole of Step 3 in one line.
 > same; right-click the download and choose **Extract All**.
 
 You don't need to read the code to use it. The whole app is `app/app.py`, and
-underneath the file handling and the table, the part that actually reads a
-receipt is seven lines:
+it's written to be read top to bottom. Its own comments split it into numbered
+parts, and they follow one receipt all the way through: the file picker
+(Part 1), preparing the image (Part 2), asking the model (Part 3), tidying the
+answer (Part 4), and finally the page itself (Part 6). Underneath the file
+handling and the table, the piece that actually reads a receipt is seven lines:
 
 ```python
 response = ollama.chat(
@@ -252,17 +255,19 @@ Feel free to change that prompt to suit your own requirements and business
 needs — add a purchase order number, drop the payment method, ask for line
 items, or write the rules in your own language. Just be aware that the prompt
 isn't the only thing you'd be changing. `FIELDS` drives the CSV columns, and
-the rest of the file makes assumptions about what comes back: `normalise`
-knows which fields are amounts and which is a date, and the **Needs Review**
+Part 4 of `app.py` makes assumptions about what comes back: `normalise` knows
+which fields are amounts and which one is a date, and the **Needs Review**
 check assumes subtotal plus tax should equal the total. Change the field list
-and you'll want to walk through those parts of `app.py` too.
+and you'll want to walk through Part 4 too.
 
-`normalise` cleans up what comes back — stripping currency
-symbols, converting `1.725,50` to `1725.50`, turning `2024年11月5日` into
-`2024-11-05`, and flagging any receipt whose subtotal and tax don't add up to
-its total. Those details are worth a read in the file itself if you plan to
-point this at real books; they're the difference between a demo and something
-you'd trust.
+That whole part is about not trusting the answer blindly. It strips currency
+symbols, converts `1.725,50` to `1725.50`, turns `2024年11月5日` into
+`2024-11-05`, throws away anything that doesn't end up looking like a number,
+and refuses to invent a date that doesn't exist. Where a value is genuinely
+ambiguous — `06/07/2024` could be June 7th or July 6th, `1.234` could be 1234
+or 1.234 — it keeps what was printed and flags the row instead of guessing.
+Those details are worth a read in the file itself if you plan to point this at
+real books; they're the difference between a demo and something you'd trust.
 
 ---
 

@@ -19,10 +19,10 @@ Nothing leaves the machine.
    ollama pull qwen2.5vl:7b     # 6 GB — best accuracy
    ollama pull qwen2.5vl:3b     # 3.2 GB — same scores, for 8 GB machines
    ```
-3. Install the Python libraries:
+3. Install the Python libraries. From the repository root:
    ```
    python3 -m venv .venv
-   .venv/bin/pip install -r requirements.txt
+   .venv/bin/pip install -r app/requirements.txt
    ```
 
 ## Run
@@ -40,7 +40,7 @@ download the CSV.
 Or directly:
 
 ```
-.venv/bin/streamlit run app.py
+.venv/bin/streamlit run app/app.py
 ```
 
 ## Note on models
@@ -85,15 +85,16 @@ name 株式会社サクライト in place of 株式会社サクラマート.
 ## Tests
 
 ```
-app/.venv/bin/python tests/test_edge.py     qwen2.5vl:7b   # 42 unit tests
-app/.venv/bin/python tests/test_extract.py  qwen2.5vl:7b   # accuracy vs ground truth
+.venv/bin/python tests/test_upload_limits.py            # upload gate, no model needed
+.venv/bin/python tests/test_edge.py     qwen2.5vl:7b   # unit tests + live model checks
+.venv/bin/python tests/test_extract.py  qwen2.5vl:7b   # accuracy vs ground truth
 ```
 
 Browser tests (need the app running and `pip install playwright`):
 
 ```
-app/.venv/bin/python tests/test_ui.py                 # upload -> extract -> CSV
-app/.venv/bin/python tests/test_download_persists.py  # table survives a download click
+.venv/bin/python tests/test_ui.py                 # upload -> extract -> CSV
+.venv/bin/python tests/test_download_persists.py  # table survives a download click
 ```
 
 `tests/make_receipts.py` and `tests/make_receipts_ja.py` regenerate the test

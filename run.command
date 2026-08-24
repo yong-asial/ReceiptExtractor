@@ -12,6 +12,17 @@ if ! curl -s --max-time 2 http://127.0.0.1:11434/api/version >/dev/null; then
     done
 fi
 
+# Use the project's virtual environment if there is one, otherwise whatever
+# Python is on the PATH. Either way it is Streamlit that starts the app.
+if [ -x ".venv/bin/streamlit" ]; then
+    STREAMLIT=".venv/bin/streamlit"
+elif command -v streamlit >/dev/null 2>&1; then
+    STREAMLIT="streamlit"
+else
+    echo "Streamlit is not installed. Run:  pip install -r app/requirements.txt"
+    exit 1
+fi
+
 echo "Opening the Receipt Extractor in your browser…"
 echo "Press Ctrl+C in this window when you are done."
-exec app/.venv/bin/streamlit run app/app.py
+exec "$STREAMLIT" run app/app.py

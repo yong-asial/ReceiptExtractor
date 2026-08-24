@@ -16,8 +16,8 @@ class _Stub:
     def get(self, k, default=None): return self._d.get(k, default)
     def pop(self, k, default=None): return self._d.pop(k, default)
 sys.modules["streamlit"] = _Stub()
-spec = importlib.util.spec_from_file_location("receipt_app",
-        "/Users/yong-asial/projects/blog/ollama-blog/app/app.py")
+spec = importlib.util.spec_from_file_location(
+    "receipt_app", os.path.join(HERE, os.pardir, "app", "app.py"))
 app = importlib.util.module_from_spec(spec); spec.loader.exec_module(app)
 
 MODEL = sys.argv[1] if len(sys.argv) > 1 else "qwen2.5vl:7b"
